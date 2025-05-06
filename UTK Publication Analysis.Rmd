@@ -1,0 +1,954 @@
+---
+title: "UTK Publication Analysis"
+author: "Alexander Harriman"
+date: "2024-10-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Load Packages
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(gt)
+library(ggplot2)
+library(readxl)
+library(magrittr)
+library(ggpmisc)
+library(bbplot)
+library(writexl)
+```
+
+
+
+
+# Load Data
+
+```{r, warning = FALSE}
+data1 <- read_excel('UTK Publication Data 2013-2016.xlsx')
+data2 <- read_excel('UTK Publication Data 2017-2019.xlsx')
+data3 <- read_excel('UTK Publication Data 2020-2022.xlsx')
+data4 <- read_excel('UTK Publication Data 2023-2024.xlsx')
+rawData <- rbind(data1, data2, data3, data4)
+```
+
+
+
+
+# Publications by Number of Co-Authors
+
+```{r}
+numAuthors <- vector()
+for(i in 1:dim(rawData)[1]){
+  authorString <- str_split_1(rawData$`Author Full Names`[i], ';')
+  numAuthors[i] <- length(authorString)
+}
+
+allAuthor <- cbind(rawData, numAuthors)
+```
+
+
+
+
+# Citation and Usage Numbers by Number of Authors
+
+
+```{r}
+authorUsage <- allAuthor |>
+  mutate(authorClass = case_when(
+    numAuthors < 4 ~ 'Low',
+    numAuthors >= 4 & numAuthors < 14 ~ 'Med',
+    numAuthors >= 14 ~ 'High'
+  ),
+  usagePerYear = `Since 2013 Usage Count` / (2025 - `Publication Year`)) |>
+  group_by(authorClass) |>
+  summarise(publications = n(),
+            averageUsageRecent = mean(`180 Day Usage Count`),
+            averageUsagePerYear = mean(usagePerYear),
+            averageCitations = mean(`Times Cited, All Databases`))
+```
+
+
+
+
+
+
+## Trends in Usage per Year
+
+
+```{r}
+authorUsageWithYear <- allAuthor |>
+  filter(`Publication Year` >= 2013 & `Publication Year` != 2024) |>
+  mutate(authorClass = factor(case_when(
+    numAuthors < 4 ~ '1-3',
+    numAuthors >= 4 & numAuthors < 14 ~ '4-14',
+    numAuthors >= 14 ~ '15+'
+  )),
+  usagePerYear = `Since 2013 Usage Count` / (2025 - `Publication Year`)) |>
+  group_by(authorClass, `Publication Year`) |>
+  summarise(publications = n(),
+            averageUsageRecent = mean(`180 Day Usage Count`),
+            averageUsagePerYear = mean(usagePerYear),
+            averageCitations = mean(`Times Cited, All Databases`)) |>
+  arrange(factor(authorClass, levels = c('15+', '4-14', '1-3')))
+```
+
+
+
+
+```{r}
+authorUsageWithYear |>
+  mutate(`# Authors` = factor(authorClass, levels = c('15+', '4-14', '1-3'))) |>
+  ggplot(aes(x = `Publication Year`, y = publications, colour = `# Authors`)) +
+  geom_line(size = 0.8, aes(linetype = `# Authors`)) +
+  geom_point(size = 2) +
+  ggtitle('Number of Articles per Year by Author Count') +
+  xlab('Year') +
+  ylab('# Articles') +
+  labs(fill = '# Authors') +
+  scale_colour_manual(values = c('#FF8200', '#03AC13', '#051094')) +
+  scale_x_continuous(breaks = 2013:2024) +
+  theme(plot.title = element_text(size = 20,
+                                  color = '#4b4b4b',
+                                  face = 'bold')) +
+  theme(legend.text = element_text(size = 14,
+                                   color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(axis.title.x = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.y = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.text.x = element_text(color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(legend.title = element_text(color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(legend.position = 'top')
+
+
+ggsave('Number of Articles per Year by Author Count.png', width = 8, height = 4, units = 'in', dpi = 300)
+```
+
+
+
+
+
+# Publication by Publisher
+
+
+```{r}
+publisherInfo <- rawData |>
+  filter(`Publication Year` >= 2013) |>
+  group_by(Publisher) |>
+  summarise(publications = n()) |>
+  arrange(desc(publications))
+```
+
+
+
+```{r}
+bigList <- publisherInfo |>
+  filter(publications > 100)
+
+bigList <- bigList$Publisher
+```
+
+
+
+## Group Publishers Together
+
+
+```{r, warning = FALSE}
+rawData2 <- rawData |>
+  filter(`Publication Year` >= 2013)
+
+publisherGroup <- vector()
+for(i in 1:dim(rawData2)){
+  Group <- case_when(
+    str_detect(rawData2$Publisher[i], 'UNIV') == TRUE ~ 'University Press',
+    str_detect(rawData2$Publisher[i], 'ELSEVIER') == TRUE ~ 'Elsevier',
+    str_detect(rawData2$Publisher[i], 'WILEY') == TRUE ~ 'Wiley',
+    str_detect(rawData2$Publisher[i], 'SAGE') == TRUE ~ 'Sage',
+    str_detect(rawData2$Publisher[i], 'SPRINGER') == TRUE ~ 'Springer',
+    str_detect(rawData2$Publisher[i], 'TAYLOR') == TRUE ~ 'T&F',
+    .default = 'Other'
+  )
+  finalGroup <- case_when(
+    Group == 'University Press' ~ 'University Press',
+    Group != 'Other' & Group != 'American Society' & Group != 'University Press' ~ 'Big 5',
+    Group == 'Other'  & rawData2$Publisher[i] %in% bigList ~ 'Medium (>100 Pubs)',
+    Group == 'Other' & !rawData2$Publisher[i] %in% bigList ~ 'Small (<100 Pubs)',
+    .default = NA
+  )
+  publisherGroup[i] <- finalGroup
+}  
+
+publisherData <- cbind(rawData2, publisherGroup)
+```
+
+
+
+
+```{r}
+publicationYearData <- publisherData |>
+  group_by(publisherGroup, `Publication Year`) |>
+  summarise(n = n()) |>
+  arrange(publisherGroup, `Publication Year`) |>
+  mutate(publisherGroup = factor(publisherGroup, levels = c('Big 5', 'Medium (>100 Pubs)', 'Small (<100 Pubs)', 'University Press')))
+```
+
+
+```{r}
+ggplot(publicationYearData, aes(x = `Publication Year`, y = n, colour = publisherGroup)) +
+  geom_point(size = 2) +
+  geom_line(size = 0.8, aes(linetype = publisherGroup)) +
+  ggtitle('Where Researchers Publish In') +
+  xlab('Year') +
+  ylab('# Articles') +
+  labs(colour = 'Publisher Type',
+       linetype = 'Publisher Type') +
+  scale_x_continuous(breaks = 2013:2024) +
+  theme(plot.title = element_text(size = 20,
+                                  color = '#4b4b4b',
+                                  face = 'bold')) +
+  theme(legend.text = element_text(size = 12,
+                                   color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(axis.title.x = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.y = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.text.x = element_text(color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(legend.title = element_blank()) +
+  labs(caption = 'Big 5 Publishers: Elsevier, Wiley, Sage, Springer, Taylor & Francis.') +
+  theme(plot.caption = element_text(size = 12,
+                                    color = '#4b4b4b')) +
+  theme(legend.position = 'top') +
+  scale_colour_manual(values = c('#2271B2', '#F748A5', '#E69F00', '#359B73'))
+
+
+ggsave('Where Researchers Publish In.png', width = 8, height = 4, units = 'in', dpi = 300)
+```
+
+
+## Web of Science Impact Factor
+
+Using the top 600 Journal Impact Factors from each year from 2014-23.
+
+
+
+```{r}
+allWOS <- read.csv('Top WoS Journals by Impact Factor.csv')
+
+colnames(allWOS) <- c('Publisher', 'ISSN', 'eISSN', 'JIF', 'Publication Year')
+```
+
+
+```{r}
+publisherData$Date <- NULL
+```
+
+
+```{r, warning = FALSE}
+wosCombined <- left_join(publisherData, allWOS, by = c('eISSN', 'Publication Year', 'Publisher', 'ISSN')) |>
+  filter(is.na(JIF) == FALSE) |>
+  distinct()
+```
+
+
+
+
+# Group Publications by Journal Factor
+
+
+```{r}
+test <- wosCombined |>
+  filter(`Publication Year` >= 2014 & `Publication Year` <= 2023) |>
+  group_by(round(JIF, 0)) |>
+  summarise(n = n())
+
+test
+```
+
+
+With a median of slightly above 5, anything below 5 will be low impact factor, while anything above 5 will be high impact factor.
+
+
+
+## Impact Factor Group by Year
+
+```{r}
+jifClean3 <- wosCombined |>
+  mutate(groupJIF = case_when(
+    JIF < 5 ~ 'Low',
+    JIF >= 5 ~ 'High'
+  ))
+
+yearCount <- jifClean3 |>
+  group_by(`Publication Year`, groupJIF) |>
+  summarise(n = n())
+```
+
+
+## Impact Factor Group by Publication Type
+
+
+```{r}
+publisherBreakdown3 <- jifClean3 |>
+  filter(is.na(JIF) == FALSE) |>
+  group_by(publisherGroup) |>
+  summarise(n = n(),
+            meanJIF = round(mean(JIF),1)) |>
+  arrange(desc(meanJIF)) |>
+  select(publisherGroup, meanJIF) |>
+  mutate(publisherGroup = factor(publisherGroup, levels = c('Big 5', 'Medium (>100 Pubs)', 'Small (<100 Pubs)', 'University Press')))
+```
+
+```{r}
+usageJIFPlot <- ggplot(publisherBreakdown3, aes(x = publisherGroup, y = meanJIF, fill = publisherGroup)) +
+  geom_col() +
+  ggtitle('Mean JIF by Publisher Type') +
+  xlab('Publisher Type') +
+  ylab('Mean JIF') +  
+  theme(plot.title = element_text(size = 20,
+                                  color = '#4b4b4b',
+                                  face = 'bold')) +
+  theme(legend.text = element_text(size = 10,
+                                   color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(axis.title.x = element_text(size = 14,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.y = element_text(size = 14,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.text.x = element_text(color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(legend.title = element_blank()) +
+  
+  labs(caption = 'Based on Top 600 Journals by JIF Each Year, 2014-2023') +
+  geom_text(aes(label = meanJIF), vjust = -0.5) +
+  expand_limits(y = 8) +
+  scale_fill_manual(values = c('#2271B2', '#F748A5', '#E69F00', '#359B73'))
+
+usageJIFPlot
+
+ggsave('Mean JIF by Publisher Type.png', width = 8, height = 4, units = 'in', dpi = 300)
+```
+
+
+
+# InCites Data from U.S. Universities
+
+
+
+```{r}
+allUni <- read_csv('InCites Data Across the USA.csv')
+```
+
+
+
+## Publication Trends by University: 10-Year Averages
+
+
+
+```{r}
+uniSummaries <- allUni |>
+  group_by(Name, `State or Province`) |>
+  summarise(Years = n(),
+            Publications = sum(`Web of Science Documents`),
+            PublicationsCorresponding = sum(`Corresponding Author (2008-2024)`),
+            CollabsDomestic = sum(`Domestic Collaborations`),
+            CollabsInternational = sum(`International Collaborations`),
+            Citations = sum(`Times Cited without Self-Citations`),
+            OAPubs = sum(`Gold Documents`),
+            HIndex = sum(`H-Index without Self-Citations`)) |>
+  mutate(AvgPubs = Publications / Years,
+         AvgIndex = HIndex / Years,
+         AvgCites = Citations / Years,
+         OARate = 100.0*(OAPubs / Publications)) |>
+  filter(Years == 10) |>
+  arrange(desc(AvgIndex))
+```
+
+
+## Publication Trends by University: Yearly Averages
+
+
+
+```{r}
+uniByYear <- allUni |>
+  group_by(Name, `State or Province`, Year) |>
+  summarise(Publications = sum(`Web of Science Documents`),
+            PublicationsCorresponding = sum(`Corresponding Author (2008-2024)`),
+            CollabsDomestic = sum(`Domestic Collaborations`),
+            CollabsInternational = sum(`International Collaborations`),
+            Citations = sum(`Times Cited without Self-Citations`),
+            OAPubs = sum(`Gold Documents`),
+            HIndex = sum(`H-Index without Self-Citations`)) |>
+  mutate(OARate = 100.0*(OAPubs / Publications)) |>
+  arrange(desc(HIndex))
+```
+
+
+# Trends at the Top Southern Universities
+
+
+```{r}
+topSouth <- uniSummaries |>
+  filter(`State or Province` == 'TENNESSEE, USA' |
+           `State or Province` == 'GEORGIA, USA' |
+           `State or Province` == 'ALABAMA, USA' |
+           `State or Province` == 'KENTUCKY, USA' |
+           `State or Province` == 'VIRGINIA, USA' |
+           `State or Province` == 'NORTH CAROLINA, USA' |
+           `State or Province` == 'SOUTH CAROLINA, USA' |
+           `State or Province` == 'FLORIDA, USA' |
+           `State or Province` == 'MISSISSIPPI, USA' |
+           `State or Province` == 'LOUISIANA, USA' |
+           `State or Province` == 'TEXAS, USA' |
+           `State or Province` == 'OKLAHOMA, USA' |
+           `State or Province` == 'ARKANSAS, USA') |>
+  arrange(desc(AvgIndex)) |>
+  head(n = 25)
+```
+
+
+```{r}
+topSouth2 <- uniByYear |>
+  filter(Name %in% c('Duke University',
+                     'University of North Carolina Chapel Hill',
+                     'Vanderbilt University',
+                     'University of Texas Austin',
+                     'University of Florida',
+                     'Georgia Institute of Technology',
+                     'University of Virginia',
+                     'Texas A&M University College Station',
+                     'University of Miami',
+                     'University of Tennessee Knoxville')) |>
+  mutate(Name = case_when(
+    Name == 'Duke University' ~ 'Duke',
+    Name == 'University of North Carolina Chapel Hill' ~ 'UNC - Chapel Hill',
+    Name == 'Vanderbilt University' ~ 'Vanderbilt',
+    Name == 'University of Texas Austin' ~ 'Texas - Austin',
+    Name == 'University of Florida' ~ 'Florida',
+    Name == 'Georgia Institute of Technology' ~ 'Georgia Tech',
+    Name == 'University of Virginia' ~ 'Virginia',
+    Name == 'Texas A&M University College Station' ~ 'Texas A&M',
+    Name == 'University of Miami' ~ 'Miami (FL)',
+    Name == 'University of Tennessee Knoxville' ~ 'UT Knoxville'
+  )) |>
+  mutate(Name = factor(Name, levels = c('Duke',
+                                        'Florida',
+                                        'UNC - Chapel Hill',
+                                        'Vanderbilt',
+                                        'Texas - Austin',
+                                        'Texas A&M',
+                                        'Virginia',
+                                        'Miami (FL)',
+                                        'Georgia Tech',
+                                        'UT Knoxville'
+  )))
+```
+
+
+```{r}
+ggplot(topSouth2, aes(x = Year, y = Publications, colour = Name)) +
+  geom_line(aes(linetype = Name)) +
+  ggtitle('Top Southeastern Research Universities') +
+  xlab('Year') +
+  ylab('# Articles Published') +
+  scale_x_continuous(breaks = 2014:2023) +
+  theme(plot.title = element_text(size = 18,
+                                  color = '#4b4b4b',
+                                  face = 'bold')) +
+  theme(legend.text = element_text(size = 12,
+                                   color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(axis.title.x = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.y = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.text.x = element_text(color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(legend.title = element_blank()) +
+  theme(plot.caption = element_text(size = 10,
+                                    color = '#4b4b4b')) +
+  scale_colour_manual(values = c('Duke' = '#012169',
+                                 'UT Knoxville' = '#FF8200',
+                                 'UNC - Chapel Hill' = '#007fae',
+                                 'Texas A&M' = '#500000',
+                                 'Vanderbilt' = '#CFAE70',
+                                 'Florida' = '#6a2a60',
+                                 'Texas - Austin' = '#bf5700',
+                                 'Georgia Tech' = '#54585a',
+                                 'Virginia' = '#ef3f6b',
+                                 'Miami (FL)' = '#005030'))
+
+ggsave('Top Southeastern Research Universities.png', width = 7, height = 3.5, units = 'in', dpi = 300)
+```
+
+# UT Knoxville Publication Data
+
+
+```{r}
+fullPub <- read_csv('All UTK Publications.csv')
+```
+
+
+
+```{r, fig.align = 'center', echo = FALSE}
+ggplot(fullPub, aes(x = Year, y = Publications, colour = Resource)) +
+  geom_line(aes(linetype = Resource), size = 1) +
+  geom_point(color = '#4b4b4b', size = 3) +
+  ggtitle('Publications at the University of Tennessee') +
+  xlab('Year') +
+  ylab('# Articles Published') +
+  scale_x_continuous(breaks = 2014:2023) +
+  expand_limits(y = 0) +
+  geom_vline(xintercept = 2021) +
+  theme(plot.title = element_text(size = 18,
+                                  color = '#4b4b4b',
+                                  face = 'bold')) +
+  theme(legend.text = element_text(size = 12,
+                                   face = 'bold',
+                                   color = '#4b4b4b')) +
+  theme(legend.title = element_text(size = 14,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.x = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.y = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.text.x = element_text(color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(plot.caption = element_text(size = 10,
+                                    color = '#4b4b4b')) +
+  scale_colour_manual(values = c('Web of Science' = '#5E33BF',
+                                 'Scopus' = '#F28500',
+                                 'Dimensions' = '#97C997')) +
+  theme(legend.position = 'top')
+
+ggsave('Publications at the University of Tennessee.png', width = 8, height = 4, units = 'in', dpi = 300)
+```
+
+
+# How Many Schools Saw a 2019 Rise and a 2022 Fall in Publications
+
+
+```{r}
+highLowUS <- uniByYear |>
+  arrange(Name, Year) |>
+  mutate(versusLast = case_when(
+    Year == 2014 ~ 0,
+    Year != 2014 & Publications >= lag(Publications) ~ 1,
+    Year != 2014 & Publications < lag(Publications) ~ 0,
+    .default = NA))
+
+highLowUS |>
+  group_by(versusLast) |>
+  summarise(n = n())
+```
+
+
+
+```{r}
+yearToYearRatesUS <- highLowUS |>
+  filter(Year >= 2015 & is.na(versusLast) == FALSE) |>
+  group_by(Year) |>
+  summarise(Schools = n(),
+            Improvements = sum(versusLast)) |>
+  mutate(ImproveRate = round(100.0*Improvements / Schools, 1)) |>
+  arrange(Year)
+
+yearToYearRatesUS
+```
+
+
+```{r}
+yearToYearUS <- yearToYearRatesUS |>
+  mutate(Region = 'United States')
+
+yearToYearUS
+```
+
+
+# International Publishing Trends
+
+
+```{r}
+allUni <- read_excel('InCites Data for International Universities, 2014-2023.xlsx')
+```
+
+
+## Publication Trends by Nation: 10-Year Averages
+
+
+
+```{r}
+uniSummaries <- allUni |>
+  group_by(`Country or Region`) |>
+  summarise(Years = unique(Year),
+            Publications = sum(`Web of Science Documents`),
+            PublicationsCorresponding = sum(`Corresponding Author (2008-2024)`),
+            CollabsDomestic = sum(`Domestic Collaborations`),
+            CollabsInternational = sum(`International Collaborations`),
+            Citations = sum(`Times Cited without Self-Citations`),
+            OAPubs = sum(`Gold Documents`),
+            HIndex = sum(`H-Index without Self-Citations`)) |>
+  mutate(AvgPubs = Publications / Years,
+         AvgIndex = HIndex / Years,
+         AvgCites = Citations / Years,
+         OARate = 100.0*(OAPubs / Publications)) |>
+  arrange(desc(AvgIndex))
+```
+
+
+## Publication Trends by University: Yearly Averages
+
+
+
+```{r}
+uniByYear <- allUni |>
+  group_by(`Country or Region`, Year) |>
+  summarise(Publications = sum(`Web of Science Documents`),
+            PublicationsCorresponding = sum(`Corresponding Author (2008-2024)`),
+            CollabsDomestic = sum(`Domestic Collaborations`),
+            CollabsInternational = sum(`International Collaborations`),
+            Citations = sum(`Times Cited without Self-Citations`),
+            OAPubs = sum(`Gold Documents`),
+            HIndex = sum(`H-Index without Self-Citations`)) |>
+  mutate(OARate = 100.0*(OAPubs / Publications)) |>
+  arrange(desc(HIndex)) |>
+  mutate(`Country or Region` = factor(`Country or Region`, levels = c('USA', 'CHINA MAINLAND', 'UNITED KINGDOM', 'GERMANY', 'FRANCE', 'JAPAN', 'SOUTH KOREA')))
+```
+
+
+
+## Major Publishing Nations Trends
+
+
+```{r}
+ggplot(uniByYear, aes(x = Year, y = Publications, colour = `Country or Region`)) +
+  geom_point(size = 2) +
+  geom_line(size = 0.8) +
+  ggtitle('Publication Trends Around the World') +
+  xlab('Year') +
+  ylab('# Articles') +
+  scale_x_continuous(breaks = 2014:2023) +
+  theme(plot.title = element_text(size = 18,
+                                  color = '#4b4b4b',
+                                  face = 'bold')) +
+  theme(legend.text = element_text(size = 12,
+                                   color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(axis.title.x = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.y = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.text.x = element_text(color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(legend.title = element_blank()) +
+  theme(plot.caption = element_text(size = 10,
+                                    color = '#4b4b4b')) +
+  scale_colour_manual(values = c('FRANCE' = '#008000',
+                                 'SOUTH KOREA' = '#000000',
+                                 'JAPAN' = '#c1328e',
+                                 'GERMANY' = '#ffd300',
+                                 'UNITED KINGDOM' = '#522D80',
+                                 'CHINA MAINLAND' = '#CC0000',
+                                 'USA' = '#0A3161'))
+
+ggsave('Publication Trends Around the World.png', width = 8, height = 4, units = 'in', dpi = 300)
+```
+
+# How Many Schools Saw a 2019 Rise and a 2022 Fall in Publications - Mainland China
+
+```{r}
+uniByYearMLC <- allUni |>
+  filter(`Country or Region` == 'CHINA MAINLAND') |>
+  group_by(Name, Year) |>
+  summarise(Publications = sum(`Web of Science Documents`),
+            PublicationsCorresponding = sum(`Corresponding Author (2008-2024)`),
+            CollabsDomestic = sum(`Domestic Collaborations`),
+            CollabsInternational = sum(`International Collaborations`),
+            Citations = sum(`Times Cited without Self-Citations`),
+            OAPubs = sum(`Gold Documents`),
+            HIndex = sum(`H-Index without Self-Citations`)) |>
+  mutate(OARate = 100.0*(OAPubs / Publications)) |>
+  arrange(desc(HIndex))
+```
+
+
+```{r}
+highLowMLC <- uniByYearMLC |>
+  arrange(Name, Year) |>
+  mutate(versusLast = case_when(
+    Year == 2014 ~ 0,
+    Year != 2014 & Publications >= lag(Publications) ~ 1,
+    Year != 2014 & Publications < lag(Publications) ~ 0,
+    .default = NA))
+
+highLowMLC |>
+  group_by(versusLast) |>
+  summarise(n = n())
+```
+
+
+
+```{r}
+yearToYearRatesMLC <- highLowMLC |>
+  filter(Year >= 2015 & is.na(versusLast) == FALSE) |>
+  group_by(Year) |>
+  summarise(Schools = n(),
+            Improvements = sum(versusLast)) |>
+  mutate(ImproveRate = round(100.0*Improvements / Schools, 1)) |>
+  arrange(Year)
+```
+
+
+
+```{r}
+yearToYearMLC <- yearToYearRatesMLC |>
+  mutate(Region = 'Mainland China')
+```
+
+
+# How Many Schools Saw a 2019 Rise and a 2022 Fall in Publications - Other Nations in Data
+
+
+
+```{r}
+uniByYearRest <- allUni |>
+  filter(`Country or Region` != 'USA' & `Country or Region` != 'CHINA MAINLAND') |>
+  group_by(Name, Year) |>
+  summarise(Publications = sum(`Web of Science Documents`),
+            PublicationsCorresponding = sum(`Corresponding Author (2008-2024)`),
+            CollabsDomestic = sum(`Domestic Collaborations`),
+            CollabsInternational = sum(`International Collaborations`),
+            Citations = sum(`Times Cited without Self-Citations`),
+            OAPubs = sum(`Gold Documents`),
+            HIndex = sum(`H-Index without Self-Citations`)) |>
+  mutate(OARate = 100.0*(OAPubs / Publications)) |>
+  arrange(desc(HIndex))
+```
+
+
+```{r}
+highLowRest <- uniByYearRest |>
+  arrange(Name, Year) |>
+  mutate(versusLast = case_when(
+    Year == 2014 ~ 0,
+    Year != 2014 & Publications >= lag(Publications) ~ 1,
+    Year != 2014 & Publications < lag(Publications) ~ 0,
+    .default = NA))
+
+highLowRest |>
+  group_by(versusLast) |>
+  summarise(n = n())
+```
+
+
+
+```{r}
+yearToYearRatesRest <- highLowRest |>
+  filter(Year >= 2015 & is.na(versusLast) == FALSE) |>
+  group_by(Year) |>
+  summarise(Schools = n(),
+            Improvements = sum(versusLast)) |>
+  mutate(ImproveRate = round(100.0*Improvements / Schools, 1)) |>
+  arrange(Year)
+```
+
+
+
+```{r}
+yearToYearRest <- yearToYearRatesRest |>
+  mutate(Region = 'Other')
+```
+
+
+# Combine Three Regions into Final Plot
+
+```{r}
+fullYearToYear <- rbind(yearToYearUS, yearToYearMLC, yearToYearRest) 
+
+fullYearToYear <- fullYearToYear |>
+  mutate(Region = factor(Region, levels = c('Mainland China', 'United States', 'Other')))
+```
+
+
+```{r}
+ggplot(fullYearToYear, aes(x = Year, y = ImproveRate, colour = Region)) +
+  geom_point(size = 2) +
+  geom_line(size = 0.8, aes(linetype = Region)) +
+  ggtitle('Ratio of Universities with Annual Increase in Publications') +
+  xlab('Year') +
+  ylab('% Universities with Increase') +
+  expand_limits(y = 0) +
+  scale_x_continuous(breaks = 2014:2023) +
+  theme(plot.title = element_text(size = 18,
+                                  color = '#4b4b4b',
+                                  face = 'bold')) +
+  theme(legend.text = element_text(size = 12,
+                                   color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(axis.title.x = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.y = element_text(size = 14,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.text.x = element_text(color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(legend.title = element_blank()) +
+  theme(plot.caption = element_text(size = 12,
+                                    color = '#4b4b4b')) +
+  labs(caption = 'Other Nations: UK, Germany, France, Japan, South Korea') +
+  scale_colour_manual(values = c('Other' = '#5B92E5',
+                                 'Mainland China' = '#CC0000',
+                                 'United States' = '#0A3161')) +
+  theme(legend.position = 'top')
+
+ggsave('Ratio of Universities with Annual Increase in Publications.png', width = 8, height = 4, units = 'in', dpi = 300)
+```
+
+
+
+# Global Research Funding
+
+
+```{r}
+sector <- read_excel('Research Expenditure as % of GDP.xlsx', skip = 3)
+
+sector <- sector |>
+  filter(Year >= 2002 & Year <= 2021) |>
+  mutate(China = as.numeric(China),
+         `European Union` = as.numeric(`European Union`),
+         Year = as.numeric(Year)) |>
+  mutate(lagJapan = Japan - lag(Japan),
+         lagUS = `United States` - lag(`United States`),
+         lagChina = China - lag(China),
+         lagEU = `European Union` - lag(`European Union`))
+```
+
+
+```{r}
+longerSector <- sector |>
+  select(Year, lagJapan, lagUS, lagChina, lagEU) |>
+  pivot_longer(cols = c('lagJapan', 'lagUS', 'lagChina', 'lagEU'),
+               names_to = 'lagNation',
+               values_to = 'Spending_Diff_GDP') |>
+  mutate(Nation = case_when(
+    lagNation == 'lagJapan' ~ 'Japan',
+    lagNation == 'lagUS' ~ 'United States',
+    lagNation == 'lagChina' ~ 'China',
+    lagNation == 'lagEU' ~ 'European Union'
+  )) |>
+  select(Year, Nation, Spending_Diff_GDP) |>
+  filter(is.na(Spending_Diff_GDP) == FALSE) |>
+  mutate(Nation = factor(Nation, levels = c('United States', 'China', 'European Union', 'Japan')))
+```
+
+
+```{r}
+ggplot(longerSector, aes(x = Year, y = Spending_Diff_GDP, colour = Nation)) +
+  geom_line(aes(linetype = Nation)) +
+  ggtitle('Yearly Changes in R&D Spending') +
+  xlab('Year') +
+  ylab('Spending Change (% of GDP)') +
+  geom_hline(yintercept = 0) +
+  theme(plot.title = element_text(size = 18,
+                                  color = '#4b4b4b',
+                                  face = 'bold')) +
+  theme(legend.text = element_text(size = 12,
+                                   color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(axis.title.x = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.y = element_text(size = 14,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.text.x = element_text(color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(legend.title = element_blank()) +
+  theme(plot.caption = element_text(size = 10,
+                                    color = '#4b4b4b')) +
+  scale_colour_manual(values = c('European Union' = '#5ba45b',
+                                 'United States' = '#0a3161',
+                                 'Japan' = '#c1328e',
+                                 'China' = '#cc0000')) +
+  theme(legend.position = 'top')
+
+ggsave('Yearly Changes in R&D Spending.png', width = 8, height = 4, units = 'in', dpi = 300)
+```
+
+
+# Global Funding by Sector
+
+
+```{r}
+sector3 <- read_excel('Full National Research Funding by Year.xlsx')
+```
+
+
+
+```{r}
+longerSector3 <- sector3 |>
+  filter(Year >= 2003 & Year != 2022) |>
+  select(Year, Nation, Enterprise) |>
+  mutate(Enterprise = as.numeric(Enterprise),
+         Nation = factor(Nation, levels = c('United States', 'China', 'European Union', 'Japan'))) 
+```
+
+
+
+```{r}
+ggplot(longerSector3, aes(x = Year, y = Enterprise, colour = Nation)) +
+  geom_line(aes(linetype = Nation)) +
+  ggtitle('% of Research Spending from Enterprise') +
+  xlab('Year') +
+  ylab('% of Total Spending') +
+  theme(plot.title = element_text(size = 18,
+                                  color = '#4b4b4b',
+                                  face = 'bold')) +
+  theme(legend.text = element_text(size = 12,
+                                   color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(axis.title.x = element_text(size = 16,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.title.y = element_text(size = 14,
+                                    color = '#4b4b4b',
+                                    face = 'bold')) +
+  theme(axis.text.x = element_text(color = '#4b4b4b',
+                                   face = 'bold')) +
+  theme(legend.title = element_blank()) +
+  theme(plot.caption = element_text(size = 10,
+                                    color = '#4b4b4b')) +
+  scale_colour_manual(values = c('European Union' = '#5ba45b',
+                                 'United States' = '#0a3161',
+                                 'Japan' = '#c1328e',
+                                 'China' = '#cc0000')) +
+  theme(legend.position = 'top')
+
+ggsave('Research Spending from Enterprise.png', width = 8, height = 4, units = 'in', dpi = 300)
+```
+
+
