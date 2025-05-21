@@ -1,4 +1,4 @@
-This repository contains the code, data, and resources used during the creation of the poster "An Analytical Investigations into Scholarly Publication Trends" for the BRIC 2025 Conference, held at UMontréal, MIL Campus from June 3-5, 2025.
+This repository contains the code, data, and other resources used during the creation of the poster "An Analytical Investigations into Scholarly Publication Trends" for the BRIC 2025 Conference, held at UMontréal, MIL Campus from June 3-5, 2025.
 
 References:
 
